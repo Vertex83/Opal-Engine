@@ -364,7 +364,7 @@ fn main() {
             thread::sleep(sleep_time);
         }
         
-        // ==========  7: diagnostics ==========
+        // ==========  7: DIAGNOSTICS ==========
         frame_count += 1;
         
         if frame_count % 60 == 0 {
