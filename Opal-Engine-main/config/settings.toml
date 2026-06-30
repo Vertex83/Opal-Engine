@@ -1,0 +1,4 @@
+[thresholds]
+cpu_alert_level = 75.0
+auto_boost_enabled = true
+log_level = "info"
