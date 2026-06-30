@@ -67,15 +67,15 @@ mod profiler {
             let max = physics_pct.max(render_pct).max(gpu_pct);
             
             match max as u32 {
-                0..=40 => format!("✅ BALANCED ({}ms)", frame_ms),
+                0..=40 => format!(" BALANCED ({}ms)", frame_ms),
                 41..=60 => {
                     if physics_pct > render_pct { 
-                        format!("⚠️ PHYSICS HEAVY ({}ms) - {}%", frame_ms, physics_pct as u32)
+                        format!(" PHYSICS HEAVY ({}ms) - {}%", frame_ms, physics_pct as u32)
                     } else {
-                        format!("⚠️ RENDER HEAVY ({}ms) - {}%", frame_ms, render_pct as u32)
+                        format!("RENDER HEAVY ({}ms) - {}%", frame_ms, render_pct as u32)
                     }
                 }
-                _ => format!("🔴 CRITICAL ({}ms) - Physics:{}% Render:{}% GPU:{}%", frame_ms, physics_pct as u32, render_pct as u32, gpu_pct as u32),
+                _ => format!("CRITICAL ({}ms) - Physics:{}% Render:{}% GPU:{}%", frame_ms, physics_pct as u32, render_pct as u32, gpu_pct as u32),
             }
         }
         
