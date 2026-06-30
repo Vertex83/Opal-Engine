@@ -14,7 +14,7 @@ use std::{
 };
 use sysinfo::System;
 
-// ==================== MODUŁ 1: PROFILER ====================
+// ====================  1: PROFILER ====================
 mod profiler {
     use std::time::{Instant, Duration};
     use std::collections::VecDeque;
@@ -97,7 +97,7 @@ mod profiler {
     }
 }
 
-// ==================== MODUŁ 2: THREAD MANAGER ====================
+// ====================  2: THREAD MANAGER ====================
 mod thread_manager {
     use std::thread;
     use std::sync::{Arc, Mutex, mpsc};
@@ -155,7 +155,7 @@ mod thread_manager {
     }
 }
 
-// ==================== MODUŁ 3: MEMORY OPTIMIZER ====================
+// ====================  3: MEMORY OPTIMIZER ====================
 mod memory_optimizer {
     use std::collections::VecDeque;
     
@@ -215,7 +215,7 @@ mod memory_optimizer {
     }
 }
 
-// ==================== MODUŁ 4: GPU OPTIMIZER ====================
+// ====================  4: GPU OPTIMIZER ====================
 mod gpu_optimizer {
     pub struct GPUOptimizer {
         lod_levels: Vec<f32>,
@@ -295,7 +295,7 @@ fn main() {
         profiler.frame_start();
         let frame_iteration_start = Instant::now();
         
-        // ========== SEKCJA 1: SYSTEM MONITORING ==========
+        // ==========  1: SYSTEM MONITORING ==========
         if frame_count % 30 == 0 {
             sys.refresh_cpu();
             sys.refresh_memory();
@@ -310,10 +310,10 @@ fn main() {
             0.0
         };
 
-        // ========== SEKCJA 2: PRIORITY OPTIMIZATION ==========
+        // ==========  2: PRIORITY OPTIMIZATION ==========
         let report = apply_optimization(cpu_usage, memory_usage, &config);
         
-        // ========== SEKCJA 3: PARALLEL PHYSICS ==========
+        // ==========  3: PARALLEL PHYSICS ==========
         let physics_start = Instant::now();
         let num_objects = 10000;
         thread_pool.parallel_for(0, num_objects, 1000, |_i| {
@@ -323,7 +323,7 @@ fn main() {
         });
         profiler.physics_time = physics_start.elapsed();
         
-        // ========== SEKCJA 4: GPU OPTIMIZATION (CULLING + LOD) ==========
+        // ==========  4: GPU OPTIMIZATION (CULLING + LOD) ==========
         let render_start = Instant::now();
         let camera_pos = (0.0, 0.0, 0.0);
         let view_distance = 500.0;
@@ -343,7 +343,7 @@ fn main() {
         }
         profiler.render_time = render_start.elapsed();
         
-        // ========== SEKCJA 5: MEMORY MANAGEMENT ==========
+        // ==========  5: MEMORY MANAGEMENT ==========
         if gc.should_collect() {
             memory_pool.defragment();
         }
@@ -354,7 +354,7 @@ fn main() {
             }
         }
         
-        // ========== SEKCJA 6: FRAME TIMING CONTROL ==========
+        // ==========  6: FRAME TIMING CONTROL ==========
         let (fps, frame_ms) = profiler.frame_end();
         
         // Adaptive FPS limiting
@@ -364,7 +364,7 @@ fn main() {
             thread::sleep(sleep_time);
         }
         
-        // ========== SEKCJA 7: DIAGNOSTYKA ==========
+        // ==========  7: DIAGNOSTYKA ==========
         frame_count += 1;
         
         if frame_count % 60 == 0 {
