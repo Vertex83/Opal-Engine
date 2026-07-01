@@ -1,4 +1,7 @@
 ﻿use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use std::collections::VecDeque;
 
 #[cfg(target_os = "windows")]
 use winapi::um::errhandlingapi::GetLastError;
@@ -317,6 +320,191 @@ pub extern "C" fn opal_aggressive_optimize(
             Some(_) => 500,
             None => 500,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WorkloadType {
+    CpuBound,
+    IoBound,
+    MemoryIntensive,
+    Balanced,
+}
+
+pub struct WorkloadAnalyzer {
+    cpu_variance: f32,
+    memory_trend: f32,
+    io_pressure: f32,
+}
+
+impl WorkloadAnalyzer {
+    pub fn new() -> Self {
+        Self {
+            cpu_variance: 0.0,
+            memory_trend: 0.0,
+            io_pressure: 0.0,
+        }
+    }
+    
+    pub fn analyze(&mut self, cpu_history: &[f32], memory_history: &[f32]) -> WorkloadType {
+        if cpu_history.len() > 1 {
+            let mean_cpu = cpu_history.iter().sum::<f32>() / cpu_history.len() as f32;
+            self.cpu_variance = cpu_history.iter()
+                .map(|x| (x - mean_cpu).powi(2))
+                .sum::<f32>() / cpu_history.len() as f32;
+        }
+        
+        if memory_history.len() > 1 {
+            self.memory_trend = (memory_history.last().unwrap_or(&0.0) 
+                - memory_history.first().unwrap_or(&0.0)).abs();
+        }
+        
+        match (self.cpu_variance > 15.0, self.memory_trend > 20.0) {
+            (true, false) => WorkloadType::CpuBound,
+            (false, true) => WorkloadType::MemoryIntensive,
+            (true, true) => WorkloadType::IoBound,
+            _ => WorkloadType::Balanced,
+        }
+    }
+}
+
+pub struct ThreadPool {
+    sender: mpsc::Sender<Box<dyn FnOnce() + Send>>,
+    _workers: Vec<thread::JoinHandle<()>>,
+}
+
+impl ThreadPool {
+    pub fn new(num_threads: usize) -> Self {
+        let (sender, receiver) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let receiver = Arc::new(Mutex::new(receiver));
+        let mut workers = Vec::new();
+        
+        for _ in 0..num_threads {
+            let receiver = Arc::clone(&receiver);
+            let worker = thread::spawn(move || {
+                loop {
+                    if let Ok(task) = receiver.lock().unwrap().recv() {
+                        task();
+                    }
+                }
+            });
+            workers.push(worker);
+        }
+        
+        Self {
+            sender,
+            _workers: workers,
+        }
+    }
+    
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let _ = self.sender.send(Box::new(f));
+    }
+    
+    pub fn parallel_for<F>(&self, start: usize, end: usize, chunk_size: usize, f: F)
+    where
+        F: Fn(usize) + Send + Copy + 'static,
+    {
+        for chunk_start in (start..end).step_by(chunk_size) {
+            let chunk_end = (chunk_start + chunk_size).min(end);
+            self.execute(move || {
+                for i in chunk_start..chunk_end {
+                    f(i);
+                }
+            });
+        }
+    }
+}
+
+pub struct MemoryPool {
+    pool: VecDeque<Vec<u8>>,
+    chunk_size: usize,
+}
+
+impl MemoryPool {
+    pub fn new(chunk_size: usize, pool_size: usize) -> Self {
+        let mut pool = VecDeque::with_capacity(pool_size);
+        for _ in 0..pool_size {
+            pool.push_back(vec![0u8; chunk_size]);
+        }
+        
+        Self { pool, chunk_size }
+    }
+    
+    pub fn allocate(&mut self) -> Option<Vec<u8>> {
+        self.pool.pop_front()
+    }
+    
+    pub fn deallocate(&mut self, chunk: Vec<u8>) {
+        if self.pool.len() < self.pool.capacity() {
+            self.pool.push_back(chunk);
+        }
+    }
+    
+    pub fn defragment(&mut self) {
+        while self.pool.len() < self.pool.capacity() / 2 {
+            self.pool.push_back(vec![0u8; self.chunk_size]);
+        }
+    }
+    
+    pub fn get_utilization(&self) -> f32 {
+        (1.0 - (self.pool.len() as f32 / self.pool.capacity() as f32)).clamp(0.0, 1.0)
+    }
+}
+
+pub struct GPUOptimizer {
+    lod_levels: Vec<f32>,
+    max_draw_calls: u32,
+    culled_objects: u32,
+}
+
+impl GPUOptimizer {
+    pub fn new() -> Self {
+        Self {
+            lod_levels: vec![100.0, 200.0, 500.0, 1000.0, 5000.0],
+            max_draw_calls: 3000,
+            culled_objects: 0,
+        }
+    }
+    
+    pub fn calculate_lod(&self, distance: f32) -> u32 {
+        for (lod, &threshold) in self.lod_levels.iter().enumerate() {
+            if distance <= threshold {
+                return lod as u32;
+            }
+        }
+        (self.lod_levels.len() - 1) as u32
+    }
+    
+    pub fn frustum_cull(&mut self, camera_pos: (f32, f32, f32), view_distance: f32, objects: Vec<(f32, f32, f32)>) -> Vec<(f32, f32, f32)> {
+        let mut visible = Vec::new();
+        self.culled_objects = 0;
+        
+        for obj_pos in objects {
+            let dx = obj_pos.0 - camera_pos.0;
+            let dy = obj_pos.1 - camera_pos.1;
+            let dz = obj_pos.2 - camera_pos.2;
+            let distance = (dx*dx + dy*dy + dz*dz).sqrt();
+            
+            if distance <= view_distance {
+                visible.push(obj_pos);
+            } else {
+                self.culled_objects += 1;
+            }
+        }
+        
+        visible
+    }
+    
+    pub fn reduce_draw_calls(&self, current_calls: u32) -> u32 {
+        current_calls.min(self.max_draw_calls)
+    }
+    
+    pub fn get_culled_count(&self) -> u32 {
+        self.culled_objects
     }
 }
 
