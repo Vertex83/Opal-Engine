@@ -1,5 +1,10 @@
-use std::ffi::c_void;
+use std::{ffi::c_void, sync::Mutex};
+
+#[cfg(target_os = "windows")]
+use winapi::um::errhandlingapi::GetLastError;
+#[cfg(target_os = "windows")]
 use winapi::um::processthreadsapi::{GetCurrentProcess, GetCurrentThread, SetPriorityClass, SetThreadPriority};
+#[cfg(target_os = "windows")]
 use winapi::um::winbase::{
     HIGH_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS, REALTIME_PRIORITY_CLASS,
     THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_NORMAL, THREAD_PRIORITY_TIME_CRITICAL,
@@ -42,7 +47,7 @@ impl Default for OptimizationConfig {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OptimizationReport {
     pub selected_priority: ProcessPriority,
     pub applied: bool,
@@ -129,30 +134,40 @@ pub fn select_priority_for_load(cpu_load: f32, memory_load: f32, config: &Optimi
 }
 
 fn apply_priority(priority: ProcessPriority, boost_threads: bool) -> bool {
-    let process_handle = unsafe { GetCurrentProcess() };
-    let class_result = unsafe {
-        match priority {
-            ProcessPriority::Realtime => SetPriorityClass(process_handle, REALTIME_PRIORITY_CLASS),
-            ProcessPriority::High => SetPriorityClass(process_handle, HIGH_PRIORITY_CLASS),
-            ProcessPriority::Normal => SetPriorityClass(process_handle, NORMAL_PRIORITY_CLASS),
-        }
-    };
+    #[cfg(target_os = "windows")]
+    {
+        let process_handle = unsafe { GetCurrentProcess() };
+        let class_result = unsafe {
+            match priority {
+                ProcessPriority::Realtime => SetPriorityClass(process_handle, REALTIME_PRIORITY_CLASS),
+                ProcessPriority::High => SetPriorityClass(process_handle, HIGH_PRIORITY_CLASS),
+                ProcessPriority::Normal => SetPriorityClass(process_handle, NORMAL_PRIORITY_CLASS),
+            }
+        };
 
-    let thread_result = if boost_threads {
-        unsafe {
-            let thread_handle = GetCurrentThread();
-            let result = match priority {
-                ProcessPriority::Realtime => SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL as i32),
-                ProcessPriority::High => SetThreadPriority(thread_handle, THREAD_PRIORITY_ABOVE_NORMAL as i32),
-                ProcessPriority::Normal => SetThreadPriority(thread_handle, THREAD_PRIORITY_NORMAL as i32),
-            };
-            result != 0
+        if class_result == 0 {
+            return false;
         }
-    } else {
+
+        if boost_threads {
+            unsafe {
+                let thread_handle = GetCurrentThread();
+                let result = match priority {
+                    ProcessPriority::Realtime => SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL as i32),
+                    ProcessPriority::High => SetThreadPriority(thread_handle, THREAD_PRIORITY_ABOVE_NORMAL as i32),
+                    ProcessPriority::Normal => SetThreadPriority(thread_handle, THREAD_PRIORITY_NORMAL as i32),
+                };
+                return result != 0;
+            }
+        }
+
         true
-    };
+    }
 
-    class_result != 0 && thread_result
+    #[cfg(not(target_os = "windows"))]
+    {
+        true
+    }
 }
 
 pub fn apply_optimization(cpu_load: f32, memory_load: f32, config: &OptimizationConfig) -> OptimizationReport {
@@ -169,7 +184,7 @@ pub fn apply_optimization(cpu_load: f32, memory_load: f32, config: &Optimization
         applied,
         cpu_load,
         memory_load,
-        reason_code,
+        reason_code: if applied { reason_code } else { -reason_code },
     }
 }
 
@@ -204,14 +219,12 @@ pub extern "C" fn opal_auto_optimize(cpu_load: f32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn opal_apply_optimization(cpu_load: f32, memory_load: f32, config_ptr: *const OptimizationConfig) -> OptimizationReport {
-    let config = unsafe {
-        if config_ptr.is_null() {
-            &OptimizationConfig::default()
-        } else {
-            &*config_ptr
-        }
+    let config = if config_ptr.is_null() {
+        OptimizationConfig::default()
+    } else {
+        unsafe { std::ptr::read(config_ptr) }
     };
-    apply_optimization(cpu_load, memory_load, config)
+    apply_optimization(cpu_load, memory_load, &config)
 }
 
 #[no_mangle]
@@ -219,9 +232,9 @@ pub extern "C" fn opal_create_optimizer(config_ptr: *const OptimizationConfig) -
     let config = if config_ptr.is_null() {
         OptimizationConfig::default()
     } else {
-        unsafe { *config_ptr }
+        unsafe { std::ptr::read(config_ptr) }
     };
-    let controller = Box::new(OptimizerController::new(config));
+    let controller = Box::new(Mutex::new(OptimizerController::new(config)));
     Box::into_raw(controller) as *mut c_void
 }
 
@@ -229,7 +242,7 @@ pub extern "C" fn opal_create_optimizer(config_ptr: *const OptimizationConfig) -
 pub extern "C" fn opal_destroy_optimizer(handle: *mut c_void) {
     if !handle.is_null() {
         unsafe {
-            drop(Box::from_raw(handle as *mut OptimizerController));
+            drop(Box::from_raw(handle as *mut Mutex<OptimizerController>));
         }
     }
 }
@@ -240,6 +253,7 @@ pub extern "C" fn opal_update_optimizer(handle: *mut c_void, cpu_load: f32, memo
         return OptimizationReport { selected_priority: ProcessPriority::Normal, applied: false, cpu_load, memory_load, reason_code: 0 };
     }
 
-    let controller = unsafe { &mut *(handle as *mut OptimizerController) };
-    controller.update(cpu_load, memory_load, timestamp_ms)
+    let controller = unsafe { &*(handle as *mut Mutex<OptimizerController>) };
+    let mut guard = controller.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.update(cpu_load, memory_load, timestamp_ms)
 }

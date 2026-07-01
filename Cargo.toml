@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "opal"
 version = "0.1.0"
 edition = "2021"
@@ -9,5 +9,6 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 sysinfo = "0.30"
-winapi = { version = "0.3", features = ["processthreadsapi", "winbase"] }
+num_cpus = "1.16"
+winapi = { version = "0.3", features = ["processthreadsapi", "winbase", "errhandlingapi"] }
 chrono = "0.4"

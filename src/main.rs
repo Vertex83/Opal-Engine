@@ -1,17 +1,9 @@
 mod engine;
 mod modules;
-mod profiler;
-mod thread_manager;
-mod memory_optimizer;
-mod gpu_optimizer;
 
 use chrono::Local;
 use opal_lib::{apply_optimization, OptimizationConfig};
-use std::{
-    thread, time::{Duration, Instant},
-    sync::{Arc, Mutex, mpsc},
-    collections::VecDeque,
-};
+use std::{thread, time::{Duration, Instant}};
 use sysinfo::System;
 
 // ====================  1: PROFILER ====================
@@ -101,16 +93,15 @@ mod profiler {
 mod thread_manager {
     use std::thread;
     use std::sync::{Arc, Mutex, mpsc};
-    use std::collections::VecDeque;
     
     pub struct ThreadPool {
-        sender: mpsc::Sender<Box<dyn Fn() + Send>>,
+        sender: mpsc::Sender<Box<dyn FnOnce() + Send>>,
         _workers: Vec<thread::JoinHandle<()>>,
     }
     
     impl ThreadPool {
         pub fn new(num_threads: usize) -> Self {
-            let (sender, receiver) = mpsc::channel();
+            let (sender, receiver) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
             let receiver = Arc::new(Mutex::new(receiver));
             let mut workers = Vec::new();
             
@@ -134,14 +125,14 @@ mod thread_manager {
         
         pub fn execute<F>(&self, f: F)
         where
-            F: Fn() + Send + 'static,
+            F: FnOnce() + Send + 'static,
         {
             let _ = self.sender.send(Box::new(f));
         }
         
-        pub fn parallel_for<F>(&self, start: usize, end: usize, chunk_size: usize, mut f: F)
+        pub fn parallel_for<F>(&self, start: usize, end: usize, chunk_size: usize, f: F)
         where
-            F: FnMut(usize) + Send + Copy + 'static,
+            F: Fn(usize) + Send + Copy + 'static,
         {
             for chunk_start in (start..end).step_by(chunk_size) {
                 let chunk_end = (chunk_start + chunk_size).min(end);
@@ -227,7 +218,7 @@ mod gpu_optimizer {
         pub fn new() -> Self {
             Self {
                 lod_levels: vec![100.0, 200.0, 500.0, 1000.0, 5000.0],
-                max_draw_calls: 3000,  // Zmniejsz z domyślnie 10000
+                max_draw_calls: 3000,  // Reduce from default 10000
                 culled_objects: 0,
             }
         }
@@ -350,8 +341,14 @@ fn main() {
         
         if memory_usage > 85.0 {
             if let Some(_chunk) = memory_pool.allocate() {
-                // Recycle chunk
+                memory_pool.deallocate(_chunk);
             }
+        }
+        
+        // LOD culling dla CPU bottleneck
+        if cpu_usage > 70.0 {
+            let new_draw_calls = (draw_calls as f32 * 0.8) as u32;
+            draw_calls = gpu_optimizer.reduce_draw_calls(new_draw_calls);
         }
         
         // ==========  6: FRAME TIMING CONTROL ==========
